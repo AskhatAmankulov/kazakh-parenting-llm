@@ -22,7 +22,7 @@ from tqdm import tqdm  # noqa: E402
 
 from kpl.config import base_parser, load_config, resolve, set_seed  # noqa: E402
 from kpl.data import read_jsonl, read_yaml_list  # noqa: E402
-from kpl.llm import teacher_from_cfg  # noqa: E402
+from kpl.llm import QuotaExhausted, teacher_from_cfg  # noqa: E402
 from kpl.rag import load_kb  # noqa: E402
 
 LANG_NAME = {"ru": "русском", "kk": "казахском"}
@@ -111,7 +111,7 @@ def main():
     jobs = [(c, r) for r in range(args.rounds) for c in chunks if (c["id"], r) not in done]
     print(f"{len(chunks)} chunks x {args.rounds} rounds, {len(jobs)} to do, teacher={model_name}")
 
-    n_new = 0
+    n_new = fails = 0
     with open(out_path, "a", encoding="utf-8") as f:
         for c, rnd in tqdm(jobs):
             rng = random.Random(f"{c['id']}-{rnd}")
@@ -124,8 +124,20 @@ def main():
                 ex_q=ex["question"], ex_a=ex["answer"].strip(),
                 title=c["title"], text=c["text"],
             )
-            raw = teacher.chat([[{"role": "user", "content": prompt}]], temperature=cfg.teacher.temperature,
-                               max_new_tokens=4096, json_mode=True)[0]
+            try:
+                raw = teacher.chat([[{"role": "user", "content": prompt}]], temperature=cfg.teacher.temperature,
+                                   max_new_tokens=8192, json_mode=True)[0]
+                fails = 0
+            except QuotaExhausted as e:
+                print(f"\n[stop] teacher quota exhausted — keeping the {n_new} samples generated so far.\n{e}")
+                break
+            except Exception as e:
+                fails += 1
+                print(f"\n[warn] {c['id']} round {rnd}: {type(e).__name__}: {str(e)[:200]}")
+                if fails >= 5:
+                    print("[stop] 5 failures in a row — keeping what we have.")
+                    break
+                continue
             items = parse_items(raw)
             if not items:
                 print(f"\n[warn] unparsable output for {c['id']} round {rnd}")

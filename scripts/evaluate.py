@@ -74,6 +74,20 @@ def run_judge(cfg, gens, gold_by_id, cache_path: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def run_judge_cached_only(gens, cache_path: Path) -> pd.DataFrame:
+    cache = {r["key"]: r for r in read_jsonl(cache_path)}
+    rows = []
+    for g in gens:
+        key = hashlib.sha1(f"{g['variant']}|{g['id']}|{g['answer']}".encode()).hexdigest()
+        if key in cache:
+            c = cache[key]
+            rows.append({"id": g["id"], "variant": g["variant"], **{f"judge_{k}": c[k] for k in
+                         ("accuracy", "helpfulness", "safety", "language")}, "judge_comment": c.get("comment")})
+    if rows and len(rows) < len(gens):
+        print(f"[judge] only {len(rows)}/{len(gens)} answers have judge scores — treat judge columns as partial")
+    return pd.DataFrame(rows)
+
+
 def main():
     ap = base_parser(__doc__)
     ap.add_argument("--judge", action="store_true")
@@ -92,8 +106,13 @@ def main():
     rdir = resolve(cfg.paths.results_dir)
     rdir.mkdir(parents=True, exist_ok=True)
     if args.judge:
-        j = run_judge(cfg, gens, gold_by_id, rdir / "judge_cache.jsonl")
-        items = items.merge(j, on=["id", "variant"], how="left")
+        try:
+            j = run_judge(cfg, gens, gold_by_id, rdir / "judge_cache.jsonl")
+        except Exception as e:  # quota / provider errors must not lose the automatic metrics
+            print(f"[judge] stopped: {type(e).__name__}: {str(e)[:200]} — using cached scores only")
+            j = run_judge_cached_only(gens, rdir / "judge_cache.jsonl")
+        if len(j):
+            items = items.merge(j, on=["id", "variant"], how="left")
     items.to_csv(rdir / "items.csv", index=False)
 
     agg_cols = {

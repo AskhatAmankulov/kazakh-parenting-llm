@@ -15,6 +15,18 @@ from typing import Any
 Messages = list[dict[str, str]]
 
 
+class QuotaExhausted(RuntimeError):
+    """The provider's daily / long quota is used up — retrying now is pointless."""
+
+
+def _is_long_quota(err: Exception) -> bool:
+    msg = str(err)
+    if "PerDay" in msg or "per day" in msg.lower() or "tokens per day" in msg.lower():
+        return True
+    m = re.search(r"retry in (?:(\d+)h)?(?:(\d+)m)?", msg)
+    return bool(m and (m.group(1) or (m.group(2) and int(m.group(2)) >= 5)))
+
+
 def bnb_config(compute_dtype: str = "float16", quant_type: str = "nf4", double_quant: bool = True):
     import torch
     from transformers import BitsAndBytesConfig
@@ -157,6 +169,8 @@ class OpenAIChat:
                     print(f"[teacher] model '{self.model}' is not available -> switching to '{new}'")
                     self.model = new
                 except Exception as e:  # rate limits on free tiers are routine
+                    if _is_long_quota(e):
+                        raise QuotaExhausted(str(e)[:300]) from None
                     if attempt == self.max_retries - 1:
                         raise
                     wait = 2 ** attempt * 3
@@ -168,7 +182,10 @@ class OpenAIChat:
 def teacher_from_cfg(cfg) -> HFChat | OpenAIChat:
     t = cfg["teacher"]
     if t["backend"] == "openai":
-        return OpenAIChat(t["model"], t.get("base_url"), t.get("api_key_env", "TEACHER_API_KEY"), rpm=t.get("rpm", 0))
+        # env overrides let the notebook switch provider (e.g. Groq) without editing the config
+        base_url = os.environ.get("TEACHER_BASE_URL") or t.get("base_url")
+        rpm = int(os.environ.get("TEACHER_RPM") or t.get("rpm", 0))
+        return OpenAIChat(t["model"], base_url, t.get("api_key_env", "TEACHER_API_KEY"), rpm=rpm)
     if t["backend"] == "hf":
         return HFChat(t["hf_model"], load_in_4bit=True, compute_dtype=cfg["model"]["compute_dtype"], batch_size=4)
     raise ValueError(f"unknown teacher backend {t['backend']!r}")
