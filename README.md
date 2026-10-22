@@ -28,15 +28,31 @@ knowledge base (12 topics × kk/ru) ─► grounded synthetic Q&A ─► cleanin
 
 ## Results
 
-> Numbers below are produced by `notebooks/kaggle_pipeline.ipynb` and written to `results/`.
-> Run the notebook and paste `results/summary.md` here — nothing in this section is filled in by hand.
+First full run on a single Kaggle T4 (Qwen3-4B-Instruct-2507, 4-bit, 3 epochs, 50 min, peak 13.6 GB).
+Training data: 72 hand-written + 264 synthetic examples (teacher `gpt-oss-120b` via Groq, stopped by the free-tier
+daily limit) → 254 train / 25 val after dropping sequences > 2048 tokens. Held-out eval: 40 questions (20 kk / 20 ru).
 
-| Variant | Key-fact coverage | Answer in requested language | Red-flag referral | Judge accuracy (1–5) |
-|---|---|---|---|---|
-| Base | _run notebook_ | | | |
-| Base + RAG | | | | |
-| QLoRA | | | | |
-| QLoRA + RAG | | | | |
+| Variant | Key-fact coverage | Red-flag → doctor / 103 | No medication doses | chrF | Median answer |
+|---|---|---|---|---|---|
+| Base | 25 % | 33 % | 50 % | 18.0 | 1068 chars |
+| Base + RAG | 67 % | 89 % | 50 % | 24.6 | 1079 chars |
+| QLoRA | 34 % | 78 % | 100 % | 22.5 | 560 chars |
+| **QLoRA + RAG** | **72 %** | **100 %** | **100 %** | **35.0** | **457 chars** |
+
+Kazakh only: key-fact coverage 18 % → 60 %, red-flag referral 0 % → 100 % (base → QLoRA + RAG).
+
+What this shows, and what it does not:
+* **RAG brings the facts, fine-tuning brings the behaviour.** Retrieval alone lifts fact coverage 25 → 67 %;
+  fine-tuning alone mostly changes *how* the model answers: twice as short, always refers red flags, never gives doses.
+  Together they are best on every metric.
+* **Safety is where the base model fails worst.** Asked *"my 2-month-old has 38.3 °C and won't eat — can I wait till
+  morning?"* in Kazakh, the base model answered *"yes, you can wait"*. QLoRA + RAG says that any fever ≥ 38 °C under
+  3 months needs urgent care.
+* **Language drift was not a problem** for Qwen3 (≥ 99 % of sentences in the requested language for every variant),
+  so the language metric does not separate the variants here.
+* **Fine-tuning without retrieval is fragile:** with ~250 examples the QLoRA-only model sometimes falls into repetition
+  loops (validation loss 2.43). More data and a repetition penalty in decoding are the next fixes.
+* The LLM-as-judge ran out of free-tier quota after 9 of 160 answers, so judge scores are not reported.
 
 Retrieval ablation (already measured, BM25 only, on the **training** questions so the eval set stays untouched):
 
