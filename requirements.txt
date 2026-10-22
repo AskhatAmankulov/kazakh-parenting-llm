@@ -1,0 +1,27 @@
+# Core (data pipeline, RAG, evaluation)
+pyyaml>=6.0
+numpy>=1.26
+pandas>=2.0
+tabulate>=0.9
+rank_bm25>=0.2.2
+sacrebleu>=2.4
+matplotlib>=3.8
+tqdm>=4.66
+openai>=1.40          # any OpenAI-compatible endpoint (OpenAI, Gemini, Groq, vLLM, ...) for teacher / judge
+
+# Training & inference (GPU: Kaggle 2xT4 / Colab T4 / any >=16GB card)
+torch>=2.3
+transformers>=4.51    # Qwen3 support
+accelerate>=0.33
+peft>=0.12
+bitsandbytes>=0.43
+datasets>=2.20
+sentence-transformers>=3.0   # BAAI/bge-m3 embeddings
+
+# Serving
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+
+# Dev
+pytest>=8.0

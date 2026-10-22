@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+.env
+
+# large / reproducible
+artifacts/
+third_party/
+data/processed/
+results/judge_cache.jsonl
+*.gguf
+*.safetensors

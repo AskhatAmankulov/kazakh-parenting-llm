@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kpl"
+version = "0.1.0"
+description = "Bilingual (Kazakh/Russian) assistant for parents of children 0-3: QLoRA fine-tuning + hybrid RAG + evaluation"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Askhat Amankulov" }]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]

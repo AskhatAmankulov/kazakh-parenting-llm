@@ -1,0 +1,74 @@
+# Single source of truth for the whole pipeline.
+# Override any value from the CLI: python scripts/train_qlora.py --set train.epochs=2 model.base=Qwen/Qwen2.5-7B-Instruct
+
+seed: 42
+
+paths:
+  kb_dir: data/kb                    # knowledge base: data/kb/{kk,ru}/*.md
+  seed_glob: data/seed/train_seed_*.yaml
+  synthetic: data/synthetic/synthetic.jsonl
+  processed_dir: data/processed      # train.jsonl / val.jsonl after prepare_dataset.py
+  eval_set: data/eval/eval.yaml      # held-out, hand-written, never used in training
+  index_dir: artifacts/index
+  adapter_dir: artifacts/lora-qwen3-4b
+  generations_dir: results/generations
+  results_dir: results
+
+model:
+  base: Qwen/Qwen3-4B-Instruct-2507  # alt: Qwen/Qwen2.5-7B-Instruct, issai/LLama-3.1-KazLLM-1.0-8B
+  load_in_4bit: true
+  bnb_quant_type: nf4
+  double_quant: true
+  compute_dtype: float16             # T4 has no bf16; use bfloat16 on Ampere+
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+train:
+  epochs: 3
+  lr: 2.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.05
+  per_device_batch: 2
+  grad_accum: 8                      # effective batch 16
+  max_seq_len: 1536
+  weight_decay: 0.0
+  eval_steps: 25
+  logging_steps: 5
+  gradient_checkpointing: true
+  train_on_rag_context_ratio: 0.5    # share of examples trained WITH retrieved context in the prompt
+
+data:
+  val_ratio: 0.08
+  min_answer_chars: 80
+  max_answer_chars: 1800
+  near_dup_threshold: 0.82           # char-5gram Jaccard on questions
+  require_lang_match: true           # drop samples whose answer language != requested language
+
+rag:
+  embed_model: BAAI/bge-m3           # multilingual incl. Kazakh
+  chunk_chars: 900
+  chunk_overlap: 150
+  top_k: 4
+  bm25_weight: 1.0
+  dense_weight: 1.0
+  rrf_k: 60
+
+generation:
+  max_new_tokens: 512
+  temperature: 0.3
+  top_p: 0.9
+  repetition_penalty: 1.05
+
+teacher:                             # synthetic data generation + LLM-as-judge
+  backend: openai                    # openai (any compatible endpoint) | hf (local model on GPU)
+  model: gemini-2.5-flash            # with base_url below; or gpt-4o-mini, llama-3.3-70b-versatile (Groq) ...
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  api_key_env: TEACHER_API_KEY
+  hf_model: Qwen/Qwen2.5-14B-Instruct
+  temperature: 0.7
+  questions_per_chunk: 4
+  rpm: 9                             # stay under free-tier per-minute limits; scripts are resumable for daily limits
