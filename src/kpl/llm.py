@@ -8,6 +8,7 @@ Both expose .chat(list_of_conversations, **gen_kwargs) -> list[str].
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any
 
@@ -109,20 +110,38 @@ class OpenAIChat:
         if not key:
             raise RuntimeError(f"set ${api_key_env} (or $OPENAI_API_KEY) for the teacher/judge endpoint")
         self.client = OpenAI(api_key=key, base_url=base_url or None)
-        self.model = model
+        self.model = os.environ.get("TEACHER_MODEL") or model
         self.max_retries = max_retries
         self.min_interval = 60.0 / rpm if rpm else 0.0   # client-side throttle for free-tier rate limits
         self._last = 0.0
 
+    def _fallback_model(self) -> str | None:
+        """Providers retire model names (e.g. gemini-2.5-flash). Pick the newest available 'flash'-class model."""
+        try:
+            ids = [m.id.split("/")[-1] for m in self.client.models.list()]
+        except Exception as e:
+            print(f"[teacher] cannot list models: {e}")
+            return None
+
+        def score(name: str):
+            nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", name)] or [0.0]
+            bad = any(w in name for w in ("lite", "image", "tts", "audio", "live", "embedding", "preview", "exp"))
+            return (not bad, "flash" in name, "latest" not in name, nums[0], name)
+
+        cands = [i for i in ids if "flash" in i or "gpt" in i or "llama" in i]
+        return max(cands, key=score) if cands else None
+
     def chat(self, convs: list[Messages], max_new_tokens: int = 1024, temperature: float = 0.7,
              top_p: float = 0.95, json_mode: bool = False, **_) -> list[str]:
+        from openai import NotFoundError
+
         outs = []
         for m in convs:
-            kw: dict[str, Any] = dict(model=self.model, messages=m, max_tokens=max_new_tokens,
-                                      temperature=temperature, top_p=top_p)
-            if json_mode:
-                kw["response_format"] = {"type": "json_object"}
             for attempt in range(self.max_retries):
+                kw: dict[str, Any] = dict(model=self.model, messages=m, max_tokens=max_new_tokens,
+                                          temperature=temperature, top_p=top_p)
+                if json_mode:
+                    kw["response_format"] = {"type": "json_object"}
                 wait = self.min_interval - (time.time() - self._last)
                 if wait > 0:
                     time.sleep(wait)
@@ -131,6 +150,12 @@ class OpenAIChat:
                     r = self.client.chat.completions.create(**kw)
                     outs.append((r.choices[0].message.content or "").strip())
                     break
+                except NotFoundError:
+                    new = self._fallback_model()
+                    if not new or new == self.model:
+                        raise
+                    print(f"[teacher] model '{self.model}' is not available -> switching to '{new}'")
+                    self.model = new
                 except Exception as e:  # rate limits on free tiers are routine
                     if attempt == self.max_retries - 1:
                         raise

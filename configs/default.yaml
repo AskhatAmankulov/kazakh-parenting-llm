@@ -65,7 +65,8 @@ generation:
 
 teacher:                             # synthetic data generation + LLM-as-judge
   backend: openai                    # openai (any compatible endpoint) | hf (local model on GPU)
-  model: gemini-2.5-flash            # with base_url below; or gpt-4o-mini, llama-3.3-70b-versatile (Groq) ...
+  model: gemini-flash-latest        # alias; if retired, the client picks the newest available flash model.
+                                     # Override without editing: env TEACHER_MODEL=...
   base_url: https://generativelanguage.googleapis.com/v1beta/openai/
   api_key_env: TEACHER_API_KEY
   hf_model: Qwen/Qwen2.5-14B-Instruct
