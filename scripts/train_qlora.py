@@ -9,7 +9,9 @@ Outputs: adapter + tokenizer, train_log.json (loss curves), loss.png, run_config
 """
 from __future__ import annotations
 
+import inspect
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -77,6 +79,10 @@ def main():
     model.print_trainable_parameters()
 
     fp16 = m.compute_dtype == "float16"
+    steps_per_epoch = math.ceil(len(train_ds) / (t.per_device_batch * t.grad_accum))
+    total_steps = t.get("max_steps", -1) if t.get("max_steps", -1) > 0 else steps_per_epoch * t.epochs
+    eval_steps = max(1, min(t.eval_steps, steps_per_epoch))   # small datasets: evaluate at least once per epoch
+    print(f"steps/epoch={steps_per_epoch} total={total_steps} eval_every={eval_steps}")
     ta = dict(
         output_dir=str(out_dir / "checkpoints"),
         num_train_epochs=t.epochs,
@@ -86,11 +92,11 @@ def main():
         gradient_accumulation_steps=t.grad_accum,
         learning_rate=t.lr,
         lr_scheduler_type=t.scheduler,
-        warmup_ratio=t.warmup_ratio,
+        warmup_steps=max(1, int(t.warmup_ratio * total_steps)),
         weight_decay=t.weight_decay,
         logging_steps=t.logging_steps,
-        eval_steps=t.eval_steps,
-        save_steps=t.eval_steps,
+        eval_steps=eval_steps,
+        save_steps=eval_steps,
         save_total_limit=2,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
@@ -105,10 +111,14 @@ def main():
         seed=cfg.seed,
         remove_unused_columns=False,
     )
-    try:
-        args_tr = TrainingArguments(eval_strategy="steps", save_strategy="steps", **ta)
-    except TypeError:  # transformers < 4.41
-        args_tr = TrainingArguments(evaluation_strategy="steps", save_strategy="steps", **ta)
+    # keep only arguments this transformers version knows (names changed between 4.x and 5.x)
+    accepted = set(inspect.signature(TrainingArguments.__init__).parameters)
+    ta["eval_strategy" if "eval_strategy" in accepted else "evaluation_strategy"] = "steps"
+    ta["save_strategy"] = "steps"
+    dropped = sorted(k for k in ta if k not in accepted)
+    if dropped:
+        print("[info] TrainingArguments: skipping unsupported", dropped)
+    args_tr = TrainingArguments(**{k: v for k, v in ta.items() if k in accepted})
 
     trainer = Trainer(model=model, args=args_tr, train_dataset=train_ds, eval_dataset=val_ds,
                       data_collator=PadCollator(tok.pad_token_id))

@@ -41,10 +41,14 @@ def load_model(name: str, load_in_4bit: bool = True, compute_dtype: str = "float
     import torch
     from transformers import AutoModelForCausalLM
 
-    kw: dict[str, Any] = {"device_map": device_map, "torch_dtype": getattr(torch, compute_dtype)}
+    kw: dict[str, Any] = {"device_map": device_map}
     if load_in_4bit:
         kw["quantization_config"] = bnb_config(compute_dtype, quant_type, double_quant)
-    model = AutoModelForCausalLM.from_pretrained(name, **kw)
+    dtype = getattr(torch, compute_dtype)
+    try:  # transformers >= 4.56 / 5.x: `dtype`; older versions: `torch_dtype`
+        model = AutoModelForCausalLM.from_pretrained(name, dtype=dtype, **kw)
+    except TypeError:
+        model = AutoModelForCausalLM.from_pretrained(name, torch_dtype=dtype, **kw)
     if adapter:
         from peft import PeftModel
 
